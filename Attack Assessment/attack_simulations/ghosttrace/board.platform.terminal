@@ -1,3 +1,0 @@
-[01;32mroot@UCanLinux[00m:[01;34m~[00m # ./gh[01;32mroot@UCanLinux[00m:[01;34m~[00m # ./ghosttrace [J
-Got signal (51 < 55): Memory reuse, Speculative UAF, and Speculative control-flow hijack triggered successfully.
-[01;32mroot@UCanLinux[00m:[01;34m~[00m # 
