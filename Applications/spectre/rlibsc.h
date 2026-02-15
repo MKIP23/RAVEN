@@ -1,9 +1,12 @@
+#ifndef CACHE_UTILS_H
+#define CACHE_UTILS_H
+
 #include <stddef.h>
 #include <stdint.h>
 
-// -----------------------
-// Common implementation +
-// -----------------------
+// ============================================================================
+// Common macros – repeat a token many times (for unrolling)
+// ============================================================================
 #define REP1(x) x
 #define REP2(x) x x
 #define REP3(x) x x x
@@ -15,168 +18,140 @@
 #define REP16(x) REP8(x) REP8(x)
 #define REP20(x) REP10(x) REP10(x)
 #define REP100(x)                                                              \
-  REP10(x)                                                                     \
-  REP10(x)                                                                     \
-  REP10(x) REP10(x) REP10(x) REP10(x) REP10(x) REP10(x) REP10(x) REP10(x)
+  REP10(x) REP10(x) REP10(x) REP10(x) REP10(x) REP10(x) REP10(x) REP10(x)      \
+  REP10(x) REP10(x)
 #define REP1K(x)                                                               \
-  REP100(x)                                                                    \
-  REP100(x)                                                                    \
-  REP100(x)                                                                    \
-  REP100(x) REP100(x) REP100(x) REP100(x) REP100(x) REP100(x) REP100(x)
+  REP100(x) REP100(x) REP100(x) REP100(x) REP100(x) REP100(x) REP100(x)        \
+  REP100(x) REP100(x) REP100(x)
 #define REP64(x) REP8(x) REP8(x) REP8(x) REP8(x) REP8(x) REP8(x) REP8(x) REP8(x)
 #define REP512(x)                                                              \
   REP64(x) REP64(x) REP64(x) REP64(x) REP64(x) REP64(x) REP64(x) REP64(x)
-#define REP4K(x)                                                               \
-  REP512(x)                                                                    \
-  REP512(x) REP512(x) REP512(x) REP512(x) REP512(x) REP512(x) REP512(x)
+#define REP4K(x) REP512(x) REP512(x) REP512(x) REP512(x) REP512(x) REP512(x)   \
+                  REP512(x) REP512(x)
 
-// Get number of retired instructions
-static inline size_t rdinstret() {
+// ============================================================================
+// Common RISC-V CSR / pseudo-instruction access
+// ============================================================================
+
+// Read instructions retired (via pseudo-instruction)
+static inline size_t rdinstret(void) {
   size_t val;
   asm volatile("rdinstret %0" : "=r"(val));
   return val;
 }
 
-// Get number of spend CPU cycpes
-static inline size_t rdcycle() {
+// Read cycle counter (via pseudo-instruction)
+static inline size_t rdcycle(void) {
   size_t val;
   asm volatile("rdcycle %0" : "=r"(val));
   return val;
 }
-// Access memory location
+
+// Access a memory location (load into a7, clobber a7 and memory)
 static inline void maccess(void *addr) {
   asm volatile("ld a7, (%0)" : : "r"(addr) : "a7", "memory");
 }
-// Flushes the I-Cache using the fence.i instruction
-static inline void fencei() { asm volatile("fence.i"); }
 
-static inline void flush_new(void* addr) {
-
-  asm volatile("xor a7, a7, a7\n"
-               "add a7, a7, %0\n"
-               "cbo.flush 0(%0)\n\t"
-  : : "r"(addr) : "a7","memory");
+// Instruction cache fence (fence.i)
+static inline void fencei(void) {
+  asm volatile("fence.i");
 }
 
-// Lower resolutin timestamp
-static inline uint64_t rdtime() {
+// Read time CSR (64-bit)
+static inline uint64_t rdtime(void) {
   uint64_t val;
   asm volatile("rdtime %0" : "=r"(val));
   return val;
 }
 
-// rdcycle but via the csr instead of pseudo instruction
+// Read cycle CSR explicitly
 static inline uint64_t get_cycle_perf(void) {
   uint64_t val;
   asm volatile("csrr %0, cycle" : "=r"(val));
   return val;
 }
 
-// rdtime but via the csr instead of pesudo instruction
+// Read time CSR explicitly
 static inline uint64_t get_time_perf(void) {
   uint64_t val;
   asm volatile("csrr %0, time" : "=r"(val));
   return val;
 }
 
-// rdinstret but via the csr instead of pesudo instruction
+// Read instret CSR explicitly
 static inline uint64_t get_retire_perf(void) {
   uint64_t val;
   asm volatile("csrr %0, instret" : "=r"(val));
   return val;
 }
 
-// Counter thread to get a timer
+// Simple counter loop (prevents optimization)
 static uint64_t count_thread(uint64_t spins) {
-  uint64_t val;
+  uint64_t val = 0;
   for (uint64_t i = 0; i < spins; i++) {
     val++;
-    asm("" ::: "memory"); // Prevents loop optimization
+    asm volatile("" ::: "memory"); // prevent loop removal
   }
   return val;
 }
 
-
-// Fenche instruction
-static inline void fence() {
-  asm volatile ("fence");
+// Fence (all memory operations)
+static inline void fence(void) {
+  asm volatile("fence" ::: "memory");
 }
 
+// ============================================================================
+// Architecture‑specific cache maintenance
+// ============================================================================
 
-------------------------------
-C906 specific implementaions +
-------------------------------
+// ----------------------------------------------------------------------------
+// T‑Head C906 / C910 (custom encodings)
+// ----------------------------------------------------------------------------
 #if defined(C906) || defined(C910)
 
-// Flushes virtual address from the D-Cache
+// Flush a virtual address from the data cache (DCACHE.CIVA a7)
 static inline void flush(void *addr) {
   asm volatile("xor a7, a7, a7\n"
                "add a7, a7, %0\n"
-               ".long 0x278800b" // DCACHE.CIVA a7
-               :
-               : "r"(addr)
-               : "a7", "memory");
+               ".long 0x278800b"          // DCACHE.CIVA a7
+               : : "r"(addr) : "a7", "memory");
 }
 
-// Flushes virtual address from the I-Cache
-static inline void iflush(void* addr) {
-    asm volatile("xor a7, a7, a7\n"
-                 "add a7, a7, %0\n"
-                 ".long 0x308800b" // ICACHE.IVA a7
-                 : : "r"(addr) : "a7","memory"); 
-}
-
-static inline void flush(void *addr) {
-    (void)addr; // Address ignored in generic implementation
-    asm volatile("cbo.flush" ::: "memory");
-}
-
-#include <stdint.h>
-
-#define CACHE_LINE_SIZE 64
-
-// Primary implementation using fixed encoding
-  // #define CBO_FLUSH(addr) asm volatile(".word 0x25200F" : : "r" (addr))
-
- static inline void flush(void *addr) {
-   //   uintptr_t aligned = (uintptr_t)addr & ~(CACHE_LINE_SIZE-1);
-    //  CBO_FLUSH(aligned);
-    
-    // Alternative implementations (commented out - test one at a time):
-    
-    // // 1. Standard Zicbom syntax xxx
-    // asm volatile("cbo.flush %0" : : "r"(aligned) : "memory");
-    
-    // 2. Offset syntax
-    //  asm volatile("cbo.flush 0(%0)" : : "r"(aligned) : "memory");
-    //for (int i = 0; i < 3; i++) {  // Triple flush
-        asm volatile("cbo.flush 0(%0)" : : "r"(addr) : "memory");
-        // fence();
-    //}
-    
-    // 3. .insn format
-    // asm volatile(".insn r CBO, 0, 0, %0" : : "r"(aligned) : "memory");
-    
-    // 4. T-Head specific (C906/C910)
-    // asm volatile("xor a7, a7, a7\n"
-    //              "add a7, a7, %0\n"
-    //              ".word 0x278800b\n" // DCACHE.CIVA a7
-    //              : : "r"(aligned) : "a7", "memory");
-    
-    // 5. Compiler builtin
-    //  __builtin___clear_cache((char*)addr, (char*)addr + CACHE_LINE_SIZE);
-      fence();
-}
-
-// Memory clobber is included in the CBO_FLUSH macro
-
+// Flush a virtual address from the instruction cache (ICACHE.IVA a7)
 static inline void iflush(void *addr) {
-    (void)addr; // Address ignored in generic implementation
-    asm volatile("fence.i" ::: "memory");
+  asm volatile("xor a7, a7, a7\n"
+               "add a7, a7, %0\n"
+               ".long 0x308800b"          // ICACHE.IVA a7
+               : : "r"(addr) : "a7", "memory");
 }
-// -----------------------------
-// U74 specific implementaions +
-// -----------------------------
-//#elif defined(U74)
 
-//#endif
+// ----------------------------------------------------------------------------
+// Generic RISC‑V (using standard extensions if available)
+// ----------------------------------------------------------------------------
+#else
+
+// If the Zicbom extension is available, use cbo.flush; otherwise do nothing.
+// (Define USE_ZICBOM to enable it.)
+#ifdef USE_ZICBOM
+static inline void flush(void *addr) {
+  // Some platforms require the address to be cache‑line aligned.
+  // Uncomment the alignment if needed:
+  // uintptr_t aligned = (uintptr_t)addr & ~(64 - 1);
+  asm volatile("cbo.flush 0(%0)" : : "r"(addr) : "memory");
+}
+#else
+static inline void flush(void *addr) {
+  (void)addr;               // ignore address
+  fence();                  // at least ensure ordering
+}
+#endif // USE_ZICBOM
+
+// Instruction cache flush – always use fence.i
+static inline void iflush(void *addr) {
+  (void)addr;
+  fencei();
+}
+
+#endif // C906 || C910
+
+#endif // CACHE_UTILS_H
